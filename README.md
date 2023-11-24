@@ -2,29 +2,19 @@
 
 VS Code extension to generate go code
 
-## Generate extension
+## Usage
 
-```sh
-npm install -D typescript
-npm install -g @vscode/vsce
-vsce package
-```
+Position your cursor in the struct definition and then
 
-a `.vsix` file will be generate to the project root
+`Ctrl` + `Shift` + `P` and type `GoG` and you will see a list of available commands
 
-## Install in VS Code
+- GoG: generate full Domain object
+- GoG: generate Constructor
+- GoG: generate Hydrate
+- GoG: generate IsZero
+- GoG: generate Getters
 
-to install a `.vsix` file in VS Code:
+If you select a range of fields, only those fields will be used in the generation, where applicable.
+If no selection and the cursor is on a field, then only that field will be used.
 
-1. Go to the Extensions view.
-1. Click Views and More Actions...
-1. Select Install from VSIX...
-
-or
-
-in your terminal, run the following command:
-
-# if you use VS Code
-```sh
-code --install-extension my-extension-0.0.1.vsix
-```
+Any existing method matching the generation will be ignored

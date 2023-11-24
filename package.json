@@ -15,7 +15,23 @@
     "commands": [
       {
         "command": "quintans-gog.domain",
-        "title": "Go: Domain generation"
+        "title": "GoG: generate full Domain object"
+      },
+      {
+        "command": "quintans-gog.constructor",
+        "title": "GoG: generate Constructor"
+      },
+      {
+        "command": "quintans-gog.hydrate",
+        "title": "GoG: generate Hydrate"
+      },
+      {
+        "command": "quintans-gog.isZero",
+        "title": "GoG: generate IsZero"
+      },
+      {
+        "command": "quintans-gog.getters",
+        "title": "GoG: generate Getters"
       }
     ]
   },

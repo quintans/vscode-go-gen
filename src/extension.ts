@@ -13,66 +13,171 @@ export function activate(context: vscode.ExtensionContext) {
 	// The command has been defined in the package.json file
 	// Now provide the implementation of the command with registerCommand
 	// The commandId parameter must match the command field in package.json
-	let disposable = vscode.commands.registerCommand('quintans-gog.domain', () => {
-		// check file is open
-		var editor = vscode.window.activeTextEditor;
-		if (!editor) {
-			vscode.window.showErrorMessage("No file open")
-			return;
-		}
+	let domain = vscode.commands.registerCommand('quintans-gog.domain', () => {
+		const  {editor, selFields, funcs, struct} = prepare()
 
-		// check we have a go file open
-		if (!editor.document.fileName.endsWith(".go")) {
-			vscode.window.showErrorMessage("File is not a Go file")
-			return;
-		}
-
-		const name = structNameAt(editor)
-		if (name === "") {
+		if (!editor || !selFields || !funcs || !struct) {
 			return
 		}
 
-		// get all text in file
-		var file_text = editor.document.getText()
-
-
-		// look for structs
-		var struct_dictionary = getStructs(file_text)
-		// populate methods
-		struct_dictionary = getMethods(struct_dictionary, file_text)
-		const funcs = getFuncs(file_text)
-		const struct = struct_dictionary.get(name)
-		if (!struct) {
-			return
-		}
-		createDomain(funcs, struct)
+		createDomain(selFields, funcs, struct)
 		editor.document.save()
 	});
 
-	context.subscriptions.push(disposable);
+	context.subscriptions.push(domain);
+
+	let constructor = vscode.commands.registerCommand('quintans-gog.constructor', () => {
+		const  {editor, selFields, funcs, struct} = prepare()
+
+		if (!editor || !selFields || !funcs || !struct) {
+			return
+		}
+
+		if (funcs.has('New' + struct.name)) {
+			return
+		}
+
+		insertText(createConstructor(selFields, struct.name, struct.fields))
+		editor.document.save()
+	});
+
+	context.subscriptions.push(constructor);
+
+	let hydrate = vscode.commands.registerCommand('quintans-gog.hydrate', () => {
+		const  {editor, selFields, funcs, struct} = prepare()
+
+		if (!editor || !selFields || !funcs || !struct) {
+			return
+		}
+
+		if (funcs.has('Hydrate' + struct.name)) {
+			return
+		}
+
+		insertText(createHydration(selFields, struct.name, struct.fields));
+		editor.document.save()
+	});
+
+	context.subscriptions.push(hydrate);
+
+	let isZero = vscode.commands.registerCommand('quintans-gog.isZero', () => {
+		const  {editor, struct} = prepare()
+
+		if (!editor || !struct) {
+			return
+		}
+
+		if (struct.methods.has('IsZero')) {
+			return
+		}
+		
+		insertText(createIsZero(struct));
+		editor.document.save()
+	});
+
+	context.subscriptions.push(isZero);
+
+	let getters = vscode.commands.registerCommand('quintans-gog.getters', () => {
+		const  {editor, selFields, struct} = prepare()
+
+		if (!editor || !selFields || !struct) {
+			return
+		}
+
+		var text = "";
+		struct.fields.forEach(element => {
+			if (selFields.length != 0 && selFields.findIndex((e) => e.name === element.name) == -1) {
+				return
+			}
+
+			if (!struct.methods.has(capitalize(element.name))) {
+				text = text.concat(createGetter(struct, element))
+			}
+		});
+		
+		insertText(text);
+		editor.document.save()
+	});
+
+	context.subscriptions.push(getters);
+
+	
 }
 
-function structNameAt(editor: vscode.TextEditor): string {
+function prepare(): {editor?: vscode.TextEditor, selFields?: Field[], funcs?: Map<string, Func>, struct?: Struct} {
+	// check file is open
+	var editor = vscode.window.activeTextEditor;
+	if (!editor) {
+		vscode.window.showErrorMessage("No file open")
+		return {};
+	}
+
+	// check we have a go file open
+	if (!editor.document.fileName.endsWith(".go")) {
+		vscode.window.showErrorMessage("File is not a Go file")
+		return {};
+	}
+
+	const {name, selFields} = structNameAt(editor)
+	if (name === "") {
+		return {}
+	}
+
+	// get all text in file
+	var file_text = editor.document.getText()
+
+	// look for structs
+	var struct_dictionary = getStructs(file_text)
+	// populate methods
+	struct_dictionary = getMethods(struct_dictionary, file_text)
+	const funcs = getFuncs(file_text)
+	const struct = struct_dictionary.get(name)
+	if (!struct) {
+		return{}
+	}
+
+	return {editor, selFields, funcs, struct}
+}
+
+function structNameAt(editor: vscode.TextEditor): {name: string, selFields: Field[]} {
 	const reStructName = /type +([^ ]+) +struct {/gs;
 
-	const position = editor?.selection.active;
-	var line = editor?.document.lineAt(position.line)
-	var all_matched = [...line.text.matchAll(reStructName)]
-	if (all_matched.length === 0) {
-		vscode.window.showErrorMessage("Cursor is not positioned in a struct definition")
-		return "";
+	const positionStart = editor?.selection.start;
+	const positionEnd = editor?.selection.end;
+
+	var selFields: Field[] = []
+	for (var i = positionStart.line; i <= positionEnd.line; i++) {
+		var line = editor?.document.lineAt(i)
+		selFields.push(...parseFields(line.text))
 	}
-	const name = all_matched[0][1];
-	return name;
+
+	// walk back trying to find the struct definition
+	for (var i = positionStart.line; i >= 0; i--) {
+		var line = editor?.document.lineAt(i)
+		if (!line.text.includes("interface{}") && line.text.includes("}")) {
+			break;
+		}
+		var all_matched = [...line.text.matchAll(reStructName)]
+		if (all_matched.length !== 0) {
+			return {name: all_matched[0][1], selFields};
+		}
+	}
+
+	vscode.window.showErrorMessage("Cursor is not positioned in a struct definition")
+	return {name: "", selFields: []};
 }
 
-function createDomain(funcs: Map<string, Func>, struct: Struct) {
+function createDomain(selFields: Field[], funcs: Map<string, Func>, struct: Struct) {
 	var text = "";
 	if (!funcs.has('New' + struct.name)) {
-		text = text.concat(createConstructor(struct.name, struct.fields))
+		text = text.concat(createConstructor(selFields, struct.name, struct.fields))
 	}
 
 	struct.fields.forEach(element => {
+		if (selFields.length != 0 && selFields.findIndex((e) => e.name === element.name) == -1) {
+			return
+		}
+
 		if (!struct.methods.has(capitalize(element.name))) {
 			text = text.concat(createGetter(struct, element))
 		}
@@ -83,15 +188,19 @@ function createDomain(funcs: Map<string, Func>, struct: Struct) {
 	}
 
 	if (!funcs.has('Hydrate' + struct.name)) {
-		text = text.concat(createHydration(struct.name, struct.fields))
+		text = text.concat(createHydration(selFields, struct.name, struct.fields))
 	}
 	insertText(text);
 }
 
-function createConstructor(object_name: string, field_dict: Map<string, Field>) {
+function createConstructor(selFields: Field[], object_name: string, field_dict: Map<string, Field>) {
 	var params = ""
 	var inits = ""
 	field_dict.forEach(element => {
+		if (selFields.length != 0 && selFields.findIndex((e) => e.name === element.name) == -1) {
+			return
+		}
+
 		params = params.concat(element.name).concat(" ").concat(element.type).concat(", ")
 		inits = inits.concat(element.name).concat(": ").concat(element.name).concat(",\n")
 	});
@@ -105,10 +214,14 @@ function createConstructor(object_name: string, field_dict: Map<string, Field>) 
 	}`
 }
 
-function createHydration(object_name: string, field_dict: Map<string, Field>) {
+function createHydration(selFields: Field[], object_name: string, field_dict: Map<string, Field>) {
 	var params = ""
 	var inits = ""
 	field_dict.forEach(element => {
+		if (selFields.length != 0 && selFields.findIndex((e) => e.name === element.name) == -1) {
+			return
+		}
+
 		params = params.concat(element.name).concat(" ").concat(element.type).concat(", ")
 		inits = inits.concat(element.name).concat(": ").concat(element.name).concat(",\n")
 	});
@@ -202,54 +315,9 @@ function getStructs(file_text: string): Map<string, Struct> {
 		var field_dict = new Map<string, Field>();
 
 		struct_contents_lines.forEach(line => {
-
-			if (line != "") {
-				// trip whitespace
-				line = line.trim()
-
-				// get fields
-				// 4 cases for fields
-				// 1) Single variable per line
-				// 2) Multiple variable declaration in one line
-				// 3) Embedded types
-				// 4) Field name is capitalized and so public -  no need for getter
-
-				// first check for multiple variables with searching for comma
-				if (line.includes(",")) {
-					// split on commas and whitespace
-					var split_line = line.split(/\s+/);
-
-					// there doesn't have to be space after commas
-					// the last value in this array will always be the type though
-					var type = split_line[split_line.length - 1]
-
-					// iterate over split_line up to penultimate value, split on commas, and add all to dictionary 
-					for (let split_line_index = 0; split_line_index < split_line.length - 1; split_line_index++) {
-						var tmp = split_line[split_line_index].split(",")
-						tmp.forEach(split_by_comma_elem => {
-							if (split_by_comma_elem != "") {
-								// check if field is private
-								if (isPrivate(split_by_comma_elem)) {
-									field_dict.set(split_by_comma_elem, { name: split_by_comma_elem, type: type });
-								}
-							}
-						});
-					}
-				}
-				// now check for single variable with splitting on whitespace
-				else if (line.split(/\s+/).length == 2) {
-					var split_line = line.split(/\s+/)
-					// check if private
-					if (isPrivate(split_line[0])) {
-						field_dict.set(split_line[0], { name: split_line[0], type: split_line[1] });
-					}
-				}
-				// else it must be embedded type
-				else {
-					// don't think we do anything for this as its embedded type should provide everything
-				}
-			}
-
+			parseFields(line).forEach(field => {
+				field_dict.set(field.name, field);
+			})
 		});
 
 		struct_dictionary.set(iterator[1], {
@@ -260,6 +328,61 @@ function getStructs(file_text: string): Map<string, Struct> {
 	}
 
 	return struct_dictionary
+}
+
+function parseFields(line: string): Field[] {
+	var fields: Field[] = [];
+
+	if (line === "") {
+		return [];
+	}
+
+	// trip whitespace
+	line = line.trim()
+
+	// get fields
+	// 4 cases for fields
+	// 1) Single variable per line
+	// 2) Multiple variable declaration in one line
+	// 3) Embedded types
+	// 4) Field name is capitalized and so public -  no need for getter
+
+	// first check for multiple variables with searching for comma
+	if (line.includes(",")) {
+		// split on commas and whitespace
+		var split_line = line.split(/\s+/);
+
+		// there doesn't have to be space after commas
+		// the last value in this array will always be the type though
+		var type = split_line[split_line.length - 1]
+
+		// iterate over split_line up to penultimate value, split on commas, and add all to dictionary 
+		for (let split_line_index = 0; split_line_index < split_line.length - 1; split_line_index++) {
+			var tmp = split_line[split_line_index].split(",")
+			tmp.forEach(split_by_comma_elem => {
+				if (split_by_comma_elem != "") {
+					// check if field is private
+					if (isPrivate(split_by_comma_elem)) {
+						fields.push({ name: split_by_comma_elem, type: type });
+					}
+				}
+			});
+		}
+	}
+	// now check for single variable with splitting on whitespace
+	else if (line.split(/\s+/).length == 2) {
+		var split_line = line.split(/\s+/)
+		// check if private
+		if (isPrivate(split_line[0])) {
+			fields.push({ name: split_line[0], type: split_line[1] });
+		}
+	}
+	// else it must be embedded type
+	else {
+		// don't think we do anything for this as its embedded type should provide everything
+	}
+
+	return fields;
 }
 
 function getMethods(structs: Map<string, Struct>, file_text: string): Map<string, Struct> {
